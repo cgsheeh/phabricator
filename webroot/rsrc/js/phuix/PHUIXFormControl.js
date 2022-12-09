@@ -365,6 +365,7 @@ JX.install('PHUIXFormControl', {
     _newForm: function(spec) {
         var questions_parsed = spec.questions;
         var initial = spec.initial;
+        var form_id = spec.id;
 
         var questions = [];
         var question_list = [];
@@ -428,7 +429,8 @@ JX.install('PHUIXFormControl', {
         }
 
         var node = JX.$N('div', {
-            className: 'phui-form-view phui-form-form-table'
+            className: 'phui-form-view phui-form-form-table',
+            id: form_id
         }, question_list);
 
         return {

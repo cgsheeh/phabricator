@@ -17,6 +17,7 @@ class PhabricatorUpdateUpliftCommentAction
     }
 
     return array(
+        'id' => 'uplift-form',
         'initial' => $initial,
         'questions' => $value,
     );
