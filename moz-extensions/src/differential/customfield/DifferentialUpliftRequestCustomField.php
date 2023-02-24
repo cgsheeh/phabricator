@@ -373,6 +373,9 @@ final class DifferentialUpliftRequestCustomField
         return pht('%s updated the uplift request field.', $xaction->renderHandleLink($author_phid));
     }
 
+    // NOTE: `phab-bot` reads Phabricator feed entries to determine when to
+    // update Phabricator revisions for uplifts. This means this function is
+    // critical for the uplift workflow.
     public function getApplicationTransactionTitleForFeed(
         PhabricatorApplicationTransaction $xaction) {
 
