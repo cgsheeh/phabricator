@@ -9,30 +9,18 @@
 final class DifferentialUpliftRequestCustomField
     extends DifferentialStoredCustomField {
 
-    // Questions for beta, with defaults.
-    const BETA_UPLIFT_FIELDS = array(
-        "User impact if declined" => "",
-        "Code covered by automated testing" => false,
-        "Fix verified in Nightly" => false,
-        "Needs manual QE test" => false,
-        "Steps to reproduce for manual QE testing" => "",
-        "Risk associated with taking this patch" => "",
-        "Explanation of risk level" => "",
-        "String changes made/needed" => "",
-        "Is Android affected?" => false,
-    );
-
-    // How each field is formatted in ReMarkup:
-    // a bullet point with text in bold.
-    const QUESTION_FORMATTING = "- **%s** %s";
-
+    private UpliftRequestForm $old_form;
+    private UpliftRequestForm $new_form;
     private $proxy;
 
     /* -(  Core Properties and Field Identity  )--------------------------------- */
 
     public function readValueFromRequest(AphrontRequest $request) {
+        // there is a $request->getRequestData() that we could inspect to get a
+        // better idea of what's available.
+        // I imagine this should be setting `$new_form`
         $uplift_data = $request->getJSONMap($this->getFieldKey());
-        $this->setValue($uplift_data);
+        $this->new_form = new UpliftRequestForm($uplift_data);
     }
 
     public function getFieldKey() {
@@ -75,17 +63,19 @@ final class DifferentialUpliftRequestCustomField
     /* -(  Edit View  )---------------------------------------------------------- */
 
     public function shouldAppearInEditView() {
-        // Should the field appear in Edit Revision feature
+        // Should the field appear in Edit Revision feature, and the
+        // action menu.
         return true;
     }
 
     // How the uplift text is rendered in the "Details" section.
     public function renderPropertyViewValue(array $handles) {
+        // TODO check old_form is empty.
         if (empty($this->getValue())) {
             return null;
         }
 
-        return new PHUIRemarkupView($this->getViewer(), $this->getRemarkup());
+        return new PHUIRemarkupView($this->getViewer(), $this->old_form->getRemarkup());
     }
 
     // Returns `true` if the field meets all conditions to be editable.
@@ -111,6 +101,8 @@ final class DifferentialUpliftRequestCustomField
 
     // How the field can be edited in the "Edit Revision" menu.
     public function renderEditControl(array $handles) {
+        // TODO this make the field not display, but it clears when saving
+        // from here.
         return null;
     }
 
@@ -162,31 +154,6 @@ final class DifferentialUpliftRequestCustomField
         return false;
     }
 
-    // Convert `bool` types to readable text, or return base text.
-    private function valueAsAnswer($value): string {
-        if ($value === true) {
-            return "yes";
-        } else if ($value === false) {
-            return "no";
-        } else {
-            return $value;
-        }
-    }
-
-    private function getRemarkup(): string {
-        $questions = array();
-
-        $value = $this->getValue();
-        foreach ($value as $question => $answer) {
-            $answer_readable = $this->valueAsAnswer($answer);
-            $questions[] = sprintf(
-                self::QUESTION_FORMATTING, $question, $answer_readable
-            );
-        }
-
-        return implode("\n", $questions);
-    }
-
     public function newCommentAction() {
         // Returning `null` causes no comment action to render, effectively
         // "disabling" the field.
@@ -196,60 +163,12 @@ final class DifferentialUpliftRequestCustomField
 
         $action = id(new PhabricatorUpdateUpliftCommentAction())
             ->setConflictKey('revision.action')
+            // TODO make this use old_form
             ->setValue($this->getValue())
             ->setInitialValue(self::BETA_UPLIFT_FIELDS)
             ->setSubmitButtonText(pht('Request Uplift'));
 
         return $action;
-    }
-
-    public function validateUpliftForm(array $form): array {
-        $validation_errors = array();
-
-        # Allow clearing the form.
-        if (empty($form)) {
-            return $validation_errors;
-        }
-
-        $valid_questions = array_keys(self::BETA_UPLIFT_FIELDS);
-
-        $validated_question = array();
-        foreach($form as $question => $answer) {
-            # Assert the question is valid.
-            if (!in_array($question, $valid_questions)) {
-                $validation_errors[] = "Invalid question: '$question'";
-                continue;
-            }
-
-            $default_type = gettype(self::BETA_UPLIFT_FIELDS[$question]);
-
-            # Assert the value is not empty.
-            $empty_string = $default_type == "string" && empty($answer);
-            $null_bool = $default_type == "boolean" && is_null($answer);
-            if ($empty_string || $null_bool) {
-                $validation_errors[] = "Need to answer '$question'";
-                continue;
-            }
-
-            # Assert the type from the response matches the type of the default.
-            $answer_type = gettype($answer);
-            if ($default_type != $answer_type) {
-                $validation_errors[] = "Parsing error: type '$answer_type' for '$question' doesn't match expected '$default_type'!";
-                continue;
-            }
-
-            $validated_question[] = $question;
-        }
-
-        # Make sure we have all the required fields present in the response.
-        $missing = array_diff($valid_questions, $validated_question);
-        if (empty($validation_errors) && $missing) {
-            foreach($missing as $missing_question) {
-                $validation_errors[] = "Missing response for $missing_question";
-            }
-        }
-
-        return $validation_errors;
     }
 
     public function validateApplicationTransactions(
@@ -259,11 +178,13 @@ final class DifferentialUpliftRequestCustomField
         $errors = parent::validateApplicationTransactions($editor, $type, $xactions);
 
         foreach($xactions as $xaction) {
+            $this->new_form = new UpliftRequestForm(
+                phutil_json_decode($xaction->getNewValue())
+            );
+
             // Validate that the form is correctly filled out.
             // This should always be a string (think if the value came from the remarkup edit)
-            $validation_errors = $this->validateUpliftForm(
-                phutil_json_decode($xaction->getNewValue()),
-            );
+            $validation_errors = $this->new_form->validateUpliftForm();
 
             // Push errors into the revision save stack
             foreach($validation_errors as $validation_error) {
@@ -280,6 +201,7 @@ final class DifferentialUpliftRequestCustomField
 
     // When storing the value convert the question => answer mapping to a JSON string.
     public function getValueForStorage(): string {
+        // TODO
         return phutil_json_encode($this->getValue());
     }
 
@@ -293,7 +215,7 @@ final class DifferentialUpliftRequestCustomField
     }
 
     public function setValueFromApplicationTransactions($value) {
-        $this->setValue($value);
+        $this->new_form = new UpliftRequestForm($value);
         return $this;
     }
 
