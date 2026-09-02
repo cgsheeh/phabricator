@@ -1,0 +1,346 @@
+<?php
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+/**
+ * Recomputes a revision's merge-conflict status against its target branch and
+ * stores the result on the revision.
+ *
+ * Scheduled on the edges where an answer can change (like a GitHub PR
+ * mergeability recompute): a commit landing on the branch (see
+ * `PhabricatorRepositoryCommitPublishWorker`), a revision receiving a new diff,
+ * a revision closing or reopening, and the stack being re-wired (see
+ * `DifferentialTransactionEditor`). Because a revision lands on top of its
+ * stack, every one of those edges also fans out to the revisions stacked above
+ * the one that changed.
+ *
+ * Task data: `revisionPHID` (required), `diffPHID` (the active diff at schedule
+ * time, used to drop stale work), `triggerCommit` (optional, for logging).
+ */
+final class RevisionMergeConflictWorker extends PhabricatorWorker {
+
+  public function getMaximumRetryCount() {
+    return 2;
+  }
+
+/* -(  Configuration  )------------------------------------------------------ */
+
+  /**
+   * Whether merge conflict detection is turned on for a repository.
+   *
+   * Checked both when scheduling work and again when running it, so disabling
+   * the feature stops new checks and discards anything already queued.
+   */
+  public static function isEnabledForRepository(
+    PhabricatorRepository $repository): bool {
+
+    $enabled = PhabricatorEnv::getEnvConfig(
+      MergeConflictConfigOptions::OPTION_ENABLED);
+    if (!$enabled) {
+      return false;
+    }
+
+    $allowed = PhabricatorEnv::getEnvConfig(
+      MergeConflictConfigOptions::OPTION_REPOSITORIES);
+    if (!$allowed) {
+      return true;
+    }
+
+    // Match against every identifier the repository answers to, so operators
+    // can list callsigns, monograms, IDs or PHIDs interchangeably without this
+    // costing a query.
+    $identifiers = array(
+      $repository->getPHID(),
+      $repository->getMonogram(),
+      $repository->getCallsign(),
+      (string)$repository->getID(),
+    );
+
+    foreach ($identifiers as $identifier) {
+      if (!phutil_nonempty_string($identifier)) {
+        continue;
+      }
+      if (in_array($identifier, $allowed, true)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+/* -(  Scheduling  )--------------------------------------------------------- */
+
+  /**
+   * Queues checks for the given open revisions and for every revision stacked
+   * above them, whose mergeability depends on the revisions below.
+   */
+  public static function queueChecks(
+    PhabricatorUser $viewer,
+    array $revision_phids,
+    ?string $trigger_commit = null): void {
+
+    if (!$revision_phids) {
+      return;
+    }
+
+    $descendant_phids = RevisionMergeConflictStackQuery::loadDescendantPHIDs(
+      $revision_phids);
+
+    self::queueChecksForPHIDs(
+      $viewer,
+      array_merge($revision_phids, $descendant_phids),
+      $trigger_commit);
+  }
+
+  /**
+   * Queues checks for the revisions stacked above the given revisions, but not
+   * for the given revisions themselves. Callers that are mid-edit already know
+   * which diff to check the edited revision against and should schedule that
+   * one with `queueCheck`.
+   */
+  public static function queueDescendantChecks(
+    PhabricatorUser $viewer,
+    array $revision_phids): void {
+
+    if (!$revision_phids) {
+      return;
+    }
+
+    self::queueChecksForPHIDs(
+      $viewer,
+      RevisionMergeConflictStackQuery::loadDescendantPHIDs($revision_phids));
+  }
+
+  private static function queueChecksForPHIDs(
+    PhabricatorUser $viewer,
+    array $revision_phids,
+    ?string $trigger_commit = null): void {
+
+    if (!$revision_phids) {
+      return;
+    }
+
+    $revisions = id(new DifferentialRevisionQuery())
+      ->setViewer($viewer)
+      ->withPHIDs($revision_phids)
+      ->withIsOpen(true)
+      ->needActiveDiffs(true)
+      ->execute();
+
+    foreach ($revisions as $revision) {
+      $active_diff = $revision->getActiveDiff();
+      if (!$active_diff) {
+        continue;
+      }
+
+      self::queueCheck(
+        $revision->getPHID(),
+        $active_diff->getPHID(),
+        $trigger_commit);
+    }
+  }
+
+  /**
+   * Queues a check for a single revision against a specific diff. Callers that
+   * are mid-edit and already hold the new diff should use this so the task is
+   * pinned to that diff rather than to whatever the database currently says.
+   */
+  public static function queueCheck(
+    string $revision_phid,
+    string $diff_phid,
+    ?string $trigger_commit = null): void {
+
+    $data = array(
+      'revisionPHID' => $revision_phid,
+      'diffPHID' => $diff_phid,
+    );
+
+    if ($trigger_commit !== null) {
+      $data['triggerCommit'] = $trigger_commit;
+    }
+
+    self::scheduleTask(
+      'RevisionMergeConflictWorker',
+      $data,
+      array(
+        'objectPHID' => $revision_phid,
+        // Run at bulk priority so a wide fan-out (a commit touching a popular
+        // file, or a tall stack) doesn't starve more important queued work
+        // like mail, commit import and Herald.
+        'priority' => self::PRIORITY_BULK,
+      ));
+  }
+
+/* -(  Execution  )---------------------------------------------------------- */
+
+  protected function doWork() {
+    $viewer = PhabricatorUser::getOmnipotentUser();
+
+    $revision_phid = $this->getTaskDataValue('revisionPHID');
+    if (!$revision_phid) {
+      return;
+    }
+
+    $revision = id(new DifferentialRevisionQuery())
+      ->setViewer($viewer)
+      ->withPHIDs(array($revision_phid))
+      ->needActiveDiffs(true)
+      ->executeOne();
+    if (!$revision) {
+      return;
+    }
+
+    // Closed/abandoned revisions won't land, so there's nothing to check.
+    if ($revision->isClosed() || $revision->isAbandoned()) {
+      return;
+    }
+
+    $active_diff = $revision->getActiveDiff();
+    if (!$active_diff) {
+      return;
+    }
+
+    // If a newer diff has since been attached, this task is stale: a fresh
+    // check is (or will be) queued for the current diff, so skip writing an
+    // outdated result.
+    $scheduled_diff_phid = $this->getTaskDataValue('diffPHID');
+    if ($scheduled_diff_phid &&
+        $scheduled_diff_phid !== $active_diff->getPHID()) {
+      return;
+    }
+
+    $repository = $this->loadRepository($viewer, $revision);
+    if (!$repository) {
+      return;
+    }
+
+    if (!self::isEnabledForRepository($repository)) {
+      return;
+    }
+
+    $engine = id(new RevisionMergeConflictEngine())
+      ->setViewer($viewer)
+      ->setRevision($revision)
+      ->setDiff($active_diff)
+      ->setRepository($repository);
+
+    // Avoid recomputing a result we already have. A burst of landings on a
+    // branch can queue many tasks for the same revision; since each task
+    // resolves the branch tip live, they would otherwise all recompute the
+    // same answer.
+    if ($this->isResultCurrent($revision, $active_diff, $engine)) {
+      return;
+    }
+
+    $result = $engine->executeCheck();
+
+    $this->writeResult($revision, $active_diff, $engine, $result);
+  }
+
+  /**
+   * Returns true if the stored status is already definitive for the same
+   * inputs: the revision's active diff, the diffs of every revision below it in
+   * the stack, and the current target-branch tip. Recomputing in that case
+   * would produce an identical result.
+   *
+   * Only definitive (`clean`/`conflict`) results record a target commit, so an
+   * `unknown` result never short-circuits a retry.
+   */
+  private function isResultCurrent(
+    DifferentialRevision $revision,
+    DifferentialDiff $diff,
+    RevisionMergeConflictEngine $engine): bool {
+
+    $stored = id(new DifferentialMergeConflictStatusField())
+      ->readStoredValueForObject($revision->getPHID());
+    if (!is_array($stored)) {
+      return false;
+    }
+
+    $stored_diff_phid = idx(
+      $stored,
+      DifferentialMergeConflictStatusField::KEY_DIFF_PHID);
+    if ($stored_diff_phid !== $diff->getPHID()) {
+      return false;
+    }
+
+    $stored_tip = idx(
+      $stored,
+      DifferentialMergeConflictStatusField::KEY_TARGET_COMMIT);
+    if (!$stored_tip) {
+      return false;
+    }
+
+    $stored_stack = idx(
+      $stored,
+      DifferentialMergeConflictStatusField::KEY_STACK_DIFF_PHIDS);
+
+    try {
+      $current_stack = $engine->getStackDiffPHIDs();
+      $current_tip = $engine->resolveTargetTip();
+    } catch (Exception $ex) {
+      // If we can't cheaply establish the current inputs, don't skip; let the
+      // full check run and record an `unknown`.
+      return false;
+    }
+
+    if ($stored_stack !== $current_stack) {
+      return false;
+    }
+
+    return ($stored_tip === $current_tip);
+  }
+
+  private function loadRepository(
+    PhabricatorUser $viewer,
+    DifferentialRevision $revision): ?PhabricatorRepository {
+
+    $repository_phid = $revision->getRepositoryPHID();
+    if (!$repository_phid) {
+      return null;
+    }
+
+    return id(new PhabricatorRepositoryQuery())
+      ->setViewer($viewer)
+      ->withPHIDs(array($repository_phid))
+      ->executeOne();
+  }
+
+  private function writeResult(
+    DifferentialRevision $revision,
+    DifferentialDiff $diff,
+    RevisionMergeConflictEngine $engine,
+    array $result): void {
+
+    // The stack may not have resolved at all (that is itself a reason for an
+    // `unknown` result), in which case there is nothing to record.
+    try {
+      $stack_diff_phids = $engine->getStackDiffPHIDs();
+    } catch (Exception $ex) {
+      $stack_diff_phids = null;
+    }
+
+    $value = array(
+      DifferentialMergeConflictStatusField::KEY_STATUS =>
+        $result['status'],
+      DifferentialMergeConflictStatusField::KEY_REASON =>
+        idx($result, 'reason'),
+      DifferentialMergeConflictStatusField::KEY_TARGET_COMMIT =>
+        idx($result, 'targetCommit'),
+      DifferentialMergeConflictStatusField::KEY_DIFF_PHID =>
+        $diff->getPHID(),
+      // Cast so the payload carries a JSON number; Lisk hands back a string.
+      DifferentialMergeConflictStatusField::KEY_DIFF_ID =>
+        (int)$diff->getID(),
+      DifferentialMergeConflictStatusField::KEY_STACK_DIFF_PHIDS =>
+        $stack_diff_phids,
+      DifferentialMergeConflictStatusField::KEY_EPOCH =>
+        PhabricatorTime::getNow(),
+    );
+
+    id(new DifferentialMergeConflictStatusField())
+      ->writeStatusForObject($revision->getPHID(), $value);
+  }
+
+}
