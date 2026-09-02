@@ -1,3 +1,7 @@
+# Provides Alpine 3.21's package signing keys, so the repository used below can
+# be verified normally rather than with `--allow-untrusted`.
+FROM alpine:3.21 AS apk-keys
+
 FROM php:7.4.19-fpm-alpine AS base
 
 LABEL maintainer="dkl@mozilla.com"
@@ -15,6 +19,24 @@ ENV REPOSITORY_LOCAL_PATH=/repo
 ENV TMPDIR=/tmp
 
 USER root
+
+# Alpine 3.13 ships git 2.30, but the merge-conflict engine
+# (RevisionMergeConflictEngine) wants `git merge-tree --write-tree --merge-base`
+# (git >= 2.40), which is also the only path that follows renames. Take git from
+# Alpine 3.21, verified with 3.21's signing keys rather than `--allow-untrusted`.
+#
+# This has to run before the runtime dependencies below: once `g++` and friends
+# are installed, apk's solver can no longer satisfy 3.21's git and silently
+# leaves 2.30 in place.
+#
+# Later layers pull musl back to 3.13's 1.2.2, and that is fine -- git 2.47 uses
+# no symbol newer than that. It is a property of this git version rather than a
+# guarantee, so the final stage asserts the version actually present.
+COPY --from=apk-keys /etc/apk/keys/ /etc/apk/keys/
+RUN apk add --no-cache --upgrade \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/v3.21/main \
+        musl \
+        git
 
 # Runtime dependencies
 RUN apk --no-cache --update add \
@@ -140,6 +162,13 @@ RUN { \
     } | tee /app/phabricator/webroot/rsrc/js/MozillaRiskAnalysis.js
 RUN curl -fsSL https://raw.githubusercontent.com/marco-c/risk-analysis-addon/${RISK_ANALYSIS_VERSION}/risk_analysis.js \
     >> /app/phabricator/webroot/rsrc/js/MozillaRiskAnalysis.js
+
+# Fail the build rather than shipping an image where the merge-conflict engine
+# would silently fall back to the rename-blind legacy path, or where git cannot
+# run at all against the musl present in the final image.
+RUN git --version \
+    && git merge-tree -h 2>&1 | grep -q 'write-tree' \
+    && git merge-tree -h 2>&1 | grep -q 'merge-base'
 
 FROM base AS production
 
