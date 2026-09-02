@@ -78,6 +78,115 @@ final class PhabricatorRepositoryCommitPublishWorker
     $this->closeTasks($viewer, $commit);
 
     $this->applyTransactions($viewer, $repository, $commit);
+
+    $this->queueMergeConflictRechecks($viewer, $repository, $commit);
+  }
+
+  /**
+   * Now that a commit has landed and advanced the branch, recheck the
+   * merge-conflict status of open revisions that touch the same files. A
+   * landed commit can only introduce a conflict in files it changed, so
+   * limiting candidates by affected path is lossless.
+   *
+   * `queueChecks` also fans out to the revisions stacked above each candidate,
+   * which land on top of it and therefore inherit its conflicts.
+   */
+  private function queueMergeConflictRechecks(
+    PhabricatorUser $viewer,
+    PhabricatorRepository $repository,
+    PhabricatorRepositoryCommit $commit) {
+
+    if (!$repository->isGit()) {
+      return;
+    }
+
+    if (!RevisionMergeConflictWorker::isEnabledForRepository($repository)) {
+      return;
+    }
+
+    if (!$this->isCommitOnDefaultBranch($repository, $commit)) {
+      return;
+    }
+
+    $drequest = DiffusionRequest::newFromDictionary(
+      array(
+        'user' => $viewer,
+        'repository' => $repository,
+        'commit' => $commit->getCommitIdentifier(),
+      ));
+
+    $changes = DiffusionPathChangeQuery::newFromDiffusionRequest($drequest)
+      ->loadChanges();
+
+    $paths = $this->getChangedFilePaths($changes);
+    if (!$paths) {
+      return;
+    }
+
+    $revisions = id(new DifferentialRevisionQuery())
+      ->setViewer($viewer)
+      ->withRepositoryPHIDs(array($repository->getPHID()))
+      ->withPaths($paths)
+      ->withIsOpen(true)
+      ->execute();
+    if (!$revisions) {
+      return;
+    }
+
+    RevisionMergeConflictWorker::queueChecks(
+      $viewer,
+      mpull($revisions, 'getPHID'),
+      $commit->getCommitIdentifier());
+  }
+
+  /**
+   * Returns the files a commit changed, excluding directories.
+   *
+   * The affected-path index holds a row for every parent directory of every
+   * file a revision touches, so matching on a directory selects every revision
+   * beneath it. A landed directory change cannot conflict with a revision that
+   * merely has files under that directory, so filtering here keeps the fan-out
+   * proportional to the files actually changed.
+   *
+   * The synthesised change to "/" that every git commit carries is already
+   * excluded upstream by `DiffusionPathChangeQuery`, which selects only
+   * `isDirect = 1` rows.
+   */
+  private function getChangedFilePaths(array $changes) {
+    $paths = array();
+
+    foreach ($changes as $change) {
+      if ($change->getFileType() == DifferentialChangeType::FILE_DIRECTORY) {
+        continue;
+      }
+      $paths[] = $change->getPath();
+    }
+
+    return $paths;
+  }
+
+  /**
+   * Merge checks always merge against the repository's default branch, so a
+   * commit that did not advance that branch cannot change any answer.
+   */
+  private function isCommitOnDefaultBranch(
+    PhabricatorRepository $repository,
+    PhabricatorRepositoryCommit $commit) {
+
+    $branch = $repository->getDefaultBranch();
+    if (!phutil_nonempty_string($branch)) {
+      return false;
+    }
+
+    // Also treats a missing branch ref (exit code 128) as "not on the branch",
+    // which is right: there would be nothing to merge against anyway.
+    list($err) = $repository->getLocalCommandFuture(
+      'merge-base --is-ancestor %s %s',
+      $commit->getCommitIdentifier(),
+      'refs/heads/'.$branch)
+      ->resolve();
+
+    return ($err === 0);
   }
 
   private function applyTransactions(

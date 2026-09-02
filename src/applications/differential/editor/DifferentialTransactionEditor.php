@@ -351,6 +351,7 @@ final class DifferentialTransactionEditor
     $should_index_paths = false;
     $should_index_hashes = false;
     $need_changesets = false;
+    $stack_changed = false;
 
     foreach ($xactions as $xaction) {
       switch ($xaction->getTransactionType()) {
@@ -370,6 +371,23 @@ final class DifferentialTransactionEditor
           $need_changesets = true;
 
           $should_index_paths = true;
+          break;
+        case DifferentialRevisionCloseTransaction::TRANSACTIONTYPE:
+        case DifferentialRevisionAbandonTransaction::TRANSACTIONTYPE:
+        case DifferentialRevisionReopenTransaction::TRANSACTIONTYPE:
+          // Whether this revision will land at all just changed, so whatever
+          // is stacked above it is landing onto a different tree than before.
+          $stack_changed = true;
+          break;
+        case PhabricatorTransactions::TYPE_EDGE:
+          switch ($xaction->getMetadataValue('edge:type')) {
+            case DifferentialRevisionDependsOnRevisionEdgeType::EDGECONST:
+            case DifferentialRevisionDependedOnByRevisionEdgeType::EDGECONST:
+              // The stack was re-wired, so this revision (and everything above
+              // it) may now land on top of a different set of changes.
+              $stack_changed = true;
+              break;
+          }
           break;
       }
     }
@@ -391,6 +409,31 @@ final class DifferentialTransactionEditor
       if ($has_new_diff) {
         $this->ownersDiff = $new_diff;
         $this->ownersChangesets = $new_diff->getChangesets();
+
+        $merge_checks_enabled = $this->shouldCheckMergeConflicts($object);
+
+        // Recompute the merge-conflict status for the new diff and for anything
+        // stacked above it. Scheduling a worker rather than applying a
+        // transaction keeps this from generating feed/mail or re-entering here.
+        if ($merge_checks_enabled) {
+          RevisionMergeConflictWorker::queueCheck(
+            $object->getPHID(),
+            $new_diff->getPHID());
+
+          RevisionMergeConflictWorker::queueDescendantChecks(
+            PhabricatorUser::getOmnipotentUser(),
+            array($object->getPHID()));
+        }
+      }
+    }
+
+    // A new diff already queued this revision and its descendants above, so
+    // only queue here when nothing else did.
+    if ($stack_changed && !$has_new_diff) {
+      if ($this->shouldCheckMergeConflicts($object)) {
+        RevisionMergeConflictWorker::queueChecks(
+          PhabricatorUser::getOmnipotentUser(),
+          array($object->getPHID()));
       }
     }
 
@@ -1290,6 +1333,20 @@ final class DifferentialTransactionEditor
    * Update the table connecting revisions to DVCS local hashes, so we can
    * identify revisions by commit/tree hashes.
    */
+  /**
+   * Whether merge conflict detection is turned on for this revision's
+   * repository. A revision with no repository has no target branch to merge
+   * into.
+   */
+  private function shouldCheckMergeConflicts(DifferentialRevision $revision) {
+    $repository = $revision->getRepository();
+    if (!$repository) {
+      return false;
+    }
+
+    return RevisionMergeConflictWorker::isEnabledForRepository($repository);
+  }
+
   private function updateRevisionHashTable(
     DifferentialRevision $revision,
     DifferentialDiff $diff) {
