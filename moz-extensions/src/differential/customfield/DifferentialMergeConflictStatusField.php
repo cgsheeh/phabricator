@@ -122,6 +122,31 @@ final class DifferentialMergeConflictStatusField
   }
 
   /**
+   * Builds the payload stored for one completed check.
+   *
+   * The field owns the shape of its own storage, so callers hand over the
+   * engine's result plus the inputs it ran against rather than assembling keys
+   * themselves. The epoch is passed in so the caller decides what "now" means.
+   */
+  public static function newStatusValue(
+    array $result,
+    DifferentialDiff $diff,
+    ?array $stack_diff_phids,
+    int $epoch): array {
+
+    return array(
+      self::KEY_STATUS => idx($result, 'status'),
+      self::KEY_REASON => idx($result, 'reason'),
+      self::KEY_TARGET_COMMIT => idx($result, 'targetCommit'),
+      self::KEY_DIFF_PHID => $diff->getPHID(),
+      // Cast so the payload carries a JSON number; Lisk hands back a string.
+      self::KEY_DIFF_ID => (int)$diff->getID(),
+      self::KEY_STACK_DIFF_PHIDS => $stack_diff_phids,
+      self::KEY_EPOCH => $epoch,
+    );
+  }
+
+  /**
    * Reads the currently-stored status payload for a revision directly from
    * field storage, returning the decoded array or `null` if nothing is stored
    * (or the stored value can't be decoded). Used to decide whether a recompute

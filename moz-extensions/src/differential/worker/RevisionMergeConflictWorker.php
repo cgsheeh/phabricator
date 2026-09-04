@@ -321,23 +321,11 @@ final class RevisionMergeConflictWorker extends PhabricatorWorker {
       $stack_diff_phids = null;
     }
 
-    $value = array(
-      DifferentialMergeConflictStatusField::KEY_STATUS =>
-        $result['status'],
-      DifferentialMergeConflictStatusField::KEY_REASON =>
-        idx($result, 'reason'),
-      DifferentialMergeConflictStatusField::KEY_TARGET_COMMIT =>
-        idx($result, 'targetCommit'),
-      DifferentialMergeConflictStatusField::KEY_DIFF_PHID =>
-        $diff->getPHID(),
-      // Cast so the payload carries a JSON number; Lisk hands back a string.
-      DifferentialMergeConflictStatusField::KEY_DIFF_ID =>
-        (int)$diff->getID(),
-      DifferentialMergeConflictStatusField::KEY_STACK_DIFF_PHIDS =>
-        $stack_diff_phids,
-      DifferentialMergeConflictStatusField::KEY_EPOCH =>
-        PhabricatorTime::getNow(),
-    );
+    $value = DifferentialMergeConflictStatusField::newStatusValue(
+      $result,
+      $diff,
+      $stack_diff_phids,
+      PhabricatorTime::getNow());
 
     id(new DifferentialMergeConflictStatusField())
       ->writeStatusForObject($revision->getPHID(), $value);
