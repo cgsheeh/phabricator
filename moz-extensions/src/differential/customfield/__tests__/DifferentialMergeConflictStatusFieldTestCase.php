@@ -140,6 +140,39 @@ final class DifferentialMergeConflictStatusFieldTestCase
         'than rendering an empty note.'));
   }
 
+  public function testCheckedDiffStaleness() {
+    $this->assertFalse(
+      DifferentialMergeConflictStatusField::isCheckedDiffStale(
+        'PHID-DIFF-active',
+        'PHID-DIFF-active'),
+      pht('A verdict computed for the current diff is not stale.'));
+
+    $this->assertTrue(
+      DifferentialMergeConflictStatusField::isCheckedDiffStale(
+        'PHID-DIFF-old',
+        'PHID-DIFF-active'),
+      pht(
+        'A verdict computed for an earlier diff is stale, since the revision '.
+        'has been updated since it was computed.'));
+
+    $this->assertFalse(
+      DifferentialMergeConflictStatusField::isCheckedDiffStale(
+        null,
+        'PHID-DIFF-active'),
+      pht(
+        'A payload that does not record which diff it checked cannot be '.
+        'proven stale, so it should be reported as fresh rather than '.
+        'casting doubt on a verdict we cannot check.'));
+
+    $this->assertFalse(
+      DifferentialMergeConflictStatusField::isCheckedDiffStale(
+        'PHID-DIFF-old',
+        null),
+      pht(
+        'A revision with no active diff gives us nothing to compare against, '.
+        'so its verdict should be reported as fresh.'));
+  }
+
   private function newStatusValue(): array {
     return DifferentialMergeConflictStatusField::newStatusValue(
       array(

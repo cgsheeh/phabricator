@@ -27,6 +27,9 @@ final class DifferentialMergeConflictStatusField
   const KEY_STACK_DIFF_PHIDS = 'checkedAgainstStackDiffPHIDs';
   const KEY_EPOCH = 'epoch';
 
+  // Derived for the Conduit payload only; never written to storage.
+  const KEY_IS_STALE = 'isStale';
+
 /* -(  Core Properties and Field Identity  )--------------------------------- */
 
   public function getFieldKey() {
@@ -372,6 +375,12 @@ final class DifferentialMergeConflictStatusField
     if (!is_array($value)) {
       return null;
     }
+
+    // Lando warns from this payload alone, so answer the question it would
+    // otherwise have to work out for itself: does this verdict still describe
+    // the revision's current diff?
+    $value[self::KEY_IS_STALE] = $this->isStatusStale($value);
+
     return $value;
   }
 
@@ -420,27 +429,41 @@ final class DifferentialMergeConflictStatusField
   }
 
   /**
-   * A stored status is stale if it was computed against a diff other than the
-   * revision's current active diff. We suppress display in that case because a
-   * fresh check is already queued.
+   * Whether the stored verdict was computed against a diff other than the
+   * revision's current active diff, in which case a fresh check is already
+   * queued and this answer is only a best guess until it lands.
    */
   private function isStatusStale(array $value): bool {
-    $checked_phid = idx($value, self::KEY_DIFF_PHID);
-    if (!$checked_phid) {
-      return false;
-    }
-
     $object = $this->getObject();
     if (!($object instanceof DifferentialRevision)) {
       return false;
     }
 
-    $active_diff = $object->getActiveDiff();
-    if (!$active_diff) {
+    // Read the PHID column rather than the attached diff: this also runs over
+    // Conduit, where the active diff is not necessarily loaded.
+    return self::isCheckedDiffStale(
+      idx($value, self::KEY_DIFF_PHID),
+      $object->getActiveDiffPHID());
+  }
+
+  /**
+   * Compares the diff a verdict was computed against with the revision's
+   * current active diff. Either one being unknown is reported as fresh, since
+   * we would rather show a verdict than cast doubt on one we cannot check.
+   */
+  public static function isCheckedDiffStale(
+    ?string $checked_diff_phid,
+    ?string $active_diff_phid): bool {
+
+    if (!phutil_nonempty_string($checked_diff_phid)) {
       return false;
     }
 
-    return ($active_diff->getPHID() !== $checked_phid);
+    if (!phutil_nonempty_string($active_diff_phid)) {
+      return false;
+    }
+
+    return ($checked_diff_phid !== $active_diff_phid);
   }
 
 }
