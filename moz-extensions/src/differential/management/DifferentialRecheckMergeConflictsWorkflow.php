@@ -156,6 +156,35 @@ final class DifferentialRecheckMergeConflictsWorkflow
       $revision->getMonogram(),
       idx($stored, DifferentialMergeConflictStatusField::KEY_STATUS),
       idx($stored, DifferentialMergeConflictStatusField::KEY_REASON));
+
+    echo tsprintf("      %s\n", $this->newCheckSummary($stored));
+  }
+
+  /**
+   * Summarizes what a stored verdict was computed from, so a backfill run shows
+   * which answers are current and which ones were left alone.
+   */
+  private function newCheckSummary(array $stored): string {
+    $epoch = idx($stored, DifferentialMergeConflictStatusField::KEY_EPOCH);
+    if ($epoch) {
+      $when = phabricator_datetime($epoch, $this->getViewer());
+    } else {
+      $when = pht('an unrecorded time');
+    }
+
+    $base = idx(
+      $stored,
+      DifferentialMergeConflictStatusField::KEY_BASE_COMMIT);
+    if (!phutil_nonempty_string($base)) {
+      // An `unknown` verdict may not have got as far as resolving a base.
+      $base = pht('no resolved base');
+    }
+
+    return pht(
+      'Diff %s, based on %s, checked at %s',
+      idx($stored, DifferentialMergeConflictStatusField::KEY_DIFF_ID),
+      $base,
+      $when);
   }
 
 }
