@@ -206,17 +206,39 @@ final class DifferentialMergeConflictStatusField
       return null;
     }
 
+    $list = id(new PHUIStatusListView())
+      ->addItem($this->newVerdictItem($value));
+
+    // What the verdict was computed from matters as much as the verdict: a
+    // reader who can see the diff, the time and the base can decide for
+    // themselves whether an inconvenient answer is still worth believing.
+    $checked_item = $this->newLastCheckedItem($value);
+    if ($checked_item) {
+      $list->addItem($checked_item);
+    }
+
+    return $list;
+  }
+
+  /**
+   * Renders the verdict itself. Landing a revision lands every revision below
+   * it in the stack, and the check merges that whole stack, so this is a
+   * statement about the landing rather than about this revision's own patch.
+   */
+  private function newVerdictItem(array $value): PHUIStatusItemView {
     $item = new PHUIStatusItemView();
 
     if ($this->isStatusStale($value)) {
-      $item
+      return $item
         ->setIcon(
           PHUIStatusItemView::ICON_CLOCK,
           'blue',
           pht('Recomputing'))
-        ->setTarget(pht('Recomputing for the latest diff'));
-
-      return id(new PHUIStatusListView())->addItem($item);
+        ->setTarget(pht('Recomputing for the latest diff'))
+        ->setNote(
+          pht(
+            'The result below was computed for an earlier diff and may no '.
+            'longer apply.'));
     }
 
     switch ($value[self::KEY_STATUS]) {
@@ -226,7 +248,7 @@ final class DifferentialMergeConflictStatusField
             PHUIStatusItemView::ICON_ACCEPT,
             'green',
             pht('Merges Cleanly'))
-          ->setTarget(pht('Merges cleanly into the target branch'));
+          ->setTarget(pht('Landing merges cleanly into the target branch'));
         break;
       case self::STATUS_CONFLICT:
         $item
@@ -234,23 +256,105 @@ final class DifferentialMergeConflictStatusField
             PHUIStatusItemView::ICON_REJECT,
             'red',
             pht('Merge Conflict'))
-          ->setTarget(pht('Does not merge cleanly into the target branch'));
+          ->setTarget(
+            pht(
+              'Landing may fail: this does not merge cleanly into the '.
+              'target branch'));
         break;
       case self::STATUS_UNKNOWN:
       default:
-        // The reason is usually actionable -- a stack whose parent has not
-        // landed, or a patch that no longer applies -- so show it alongside.
         $item
           ->setIcon(
             PHUIStatusItemView::ICON_QUESTION,
             'grey',
             pht('Unknown'))
-          ->setTarget(pht('Mergeability could not be determined'))
-          ->setNote(idx($value, self::KEY_REASON));
+          ->setTarget(pht('Mergeability could not be determined'));
         break;
     }
 
-    return id(new PHUIStatusListView())->addItem($item);
+    // The reason names the revision responsible and how much of the stack was
+    // applied first, which is the actionable part of every verdict.
+    return $item->setNote(idx($value, self::KEY_REASON));
+  }
+
+  /**
+   * Renders when the stored verdict was computed and what it was computed
+   * from, or `null` if the payload records neither.
+   */
+  private function newLastCheckedItem(array $value): ?PHUIStatusItemView {
+    $epoch = idx($value, self::KEY_EPOCH);
+
+    $description = self::newCheckedAgainstDescription(
+      idx($value, self::KEY_DIFF_ID),
+      $this->newBaseCommitName($value));
+
+    if (!$epoch && $description === null) {
+      return null;
+    }
+
+    $item = new PHUIStatusItemView();
+
+    if ($epoch) {
+      $item->setTarget(
+        pht(
+          'Last checked %s',
+          phabricator_datetime($epoch, $this->requireViewer())));
+    } else {
+      $item->setTarget(pht('Last checked at an unrecorded time'));
+    }
+
+    if ($description !== null) {
+      $item->setNote($description);
+    }
+
+    return $item;
+  }
+
+  /**
+   * Describes the inputs a verdict was computed from: the diff that was checked
+   * and the base commit the stack was merged from. Returns `null` when the
+   * payload records neither, so the caller can leave the note empty.
+   */
+  public static function newCheckedAgainstDescription(
+    ?int $diff_id,
+    ?string $base_commit_name): ?string {
+
+    $has_base = phutil_nonempty_string($base_commit_name);
+
+    if ($diff_id && $has_base) {
+      return pht('Diff %d, based on %s', $diff_id, $base_commit_name);
+    }
+
+    if ($diff_id) {
+      return pht('Diff %d', $diff_id);
+    }
+
+    if ($has_base) {
+      return pht('Based on %s', $base_commit_name);
+    }
+
+    return null;
+  }
+
+  /**
+   * Abbreviates the recorded base commit the way the rest of the interface
+   * abbreviates commits, so the hash here is recognisable next to one in
+   * Diffusion.
+   */
+  private function newBaseCommitName(array $value): ?string {
+    $base_commit = idx($value, self::KEY_BASE_COMMIT);
+    if (!phutil_nonempty_string($base_commit)) {
+      return null;
+    }
+
+    $repository = $this->getRevisionRepository();
+    if (!$repository) {
+      return $base_commit;
+    }
+
+    // Format the name without the repository scope, since the field is already
+    // being read in the context of one repository's revision.
+    return $repository->formatCommitName($base_commit, true);
   }
 
 /* -(  Conduit  )------------------------------------------------------------ */
@@ -279,17 +383,26 @@ final class DifferentialMergeConflictStatusField
    * repositories that are no longer being checked.
    */
   private function isEnabledForRevisionRepository(): bool {
-    $object = $this->getObject();
-    if (!($object instanceof DifferentialRevision)) {
-      return false;
-    }
-
-    $repository = $object->getRepository();
+    $repository = $this->getRevisionRepository();
     if (!$repository) {
       return false;
     }
 
     return RevisionMergeConflictWorker::isEnabledForRepository($repository);
+  }
+
+  /**
+   * Returns the repository of the revision this field is attached to, or `null`
+   * if the field is attached to something else or the revision has no
+   * repository.
+   */
+  private function getRevisionRepository(): ?PhabricatorRepository {
+    $object = $this->getObject();
+    if (!($object instanceof DifferentialRevision)) {
+      return null;
+    }
+
+    return $object->getRepository();
   }
 
   /**

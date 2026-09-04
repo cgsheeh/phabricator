@@ -104,6 +104,42 @@ final class DifferentialMergeConflictStatusFieldTestCase
       pht('An `unknown` result may not have resolved a base commit.'));
   }
 
+  public function testCheckedAgainstDescription() {
+    $this->assertEqual(
+      'Diff 456, based on aaaaaaaaaaaa',
+      DifferentialMergeConflictStatusField::newCheckedAgainstDescription(
+        456,
+        'aaaaaaaaaaaa'),
+      pht(
+        'A complete payload should describe both the diff that was checked '.
+        'and the base it was merged from.'));
+
+    $this->assertEqual(
+      'Diff 456',
+      DifferentialMergeConflictStatusField::newCheckedAgainstDescription(
+        456,
+        null),
+      pht(
+        'An `unknown` result records no base commit, so the description '.
+        'should fall back to naming the diff alone.'));
+
+    $this->assertEqual(
+      'Based on aaaaaaaaaaaa',
+      DifferentialMergeConflictStatusField::newCheckedAgainstDescription(
+        null,
+        'aaaaaaaaaaaa'),
+      pht('A payload with only a base commit should still describe it.'));
+
+    $this->assertEqual(
+      null,
+      DifferentialMergeConflictStatusField::newCheckedAgainstDescription(
+        null,
+        null),
+      pht(
+        'A payload recording neither input should describe nothing, rather '.
+        'than rendering an empty note.'));
+  }
+
   private function newStatusValue(): array {
     return DifferentialMergeConflictStatusField::newStatusValue(
       array(
