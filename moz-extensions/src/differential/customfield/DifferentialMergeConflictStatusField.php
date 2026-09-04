@@ -21,6 +21,7 @@ final class DifferentialMergeConflictStatusField
   const KEY_STATUS = 'status';
   const KEY_REASON = 'reason';
   const KEY_TARGET_COMMIT = 'checkedAgainstCommit';
+  const KEY_BASE_COMMIT = 'checkedAgainstBaseCommit';
   const KEY_DIFF_PHID = 'checkedAgainstDiffPHID';
   const KEY_DIFF_ID = 'checkedAgainstDiffID';
   const KEY_STACK_DIFF_PHIDS = 'checkedAgainstStackDiffPHIDs';
@@ -138,6 +139,7 @@ final class DifferentialMergeConflictStatusField
       self::KEY_STATUS => idx($result, 'status'),
       self::KEY_REASON => idx($result, 'reason'),
       self::KEY_TARGET_COMMIT => idx($result, 'targetCommit'),
+      self::KEY_BASE_COMMIT => idx($result, 'baseCommit'),
       self::KEY_DIFF_PHID => $diff->getPHID(),
       // Cast so the payload carries a JSON number; Lisk hands back a string.
       self::KEY_DIFF_ID => (int)$diff->getID(),

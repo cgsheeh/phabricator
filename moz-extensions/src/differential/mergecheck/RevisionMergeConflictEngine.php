@@ -80,8 +80,11 @@ final class RevisionMergeConflictEngine extends Phobject {
 /* -(  Execution  )---------------------------------------------------------- */
 
   /**
-   * Returns a map with keys `status` and `reason`. `status` is one of the
-   * `DifferentialMergeConflictStatusField::STATUS_*` constants.
+   * Returns a map with keys `status`, `reason`, `baseCommit` and
+   * `targetCommit`. `status` is one of the
+   * `DifferentialMergeConflictStatusField::STATUS_*` constants. The two commits
+   * are only present on a definitive result, since an `unknown` one may not
+   * have got as far as resolving them.
    */
   public function executeCheck(): array {
     try {
@@ -137,7 +140,11 @@ final class RevisionMergeConflictEngine extends Phobject {
 
     $status = $this->runMerge($base, $target_tip, $revision_tree);
 
-    return $this->newResult($status, $this->newSuccessReason(), $target_tip);
+    return $this->newResult(
+      $status,
+      $this->newSuccessReason(),
+      $base,
+      $target_tip);
   }
 
 /* -(  Stack  )-------------------------------------------------------------- */
@@ -585,10 +592,12 @@ final class RevisionMergeConflictEngine extends Phobject {
   private function newResult(
     string $status,
     string $reason,
+    ?string $base_commit = null,
     ?string $target_commit = null): array {
     return array(
       'status' => $status,
       'reason' => $reason,
+      'baseCommit' => $base_commit,
       'targetCommit' => $target_commit,
     );
   }

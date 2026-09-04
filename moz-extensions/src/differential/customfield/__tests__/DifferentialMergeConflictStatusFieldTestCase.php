@@ -50,6 +50,13 @@ final class DifferentialMergeConflictStatusFieldTestCase
       'ffffffffffffffffffffffffffffffffffffffff',
       idx($value, DifferentialMergeConflictStatusField::KEY_TARGET_COMMIT),
       pht('The payload should record the target branch tip that was merged.'));
+
+    $this->assertEqual(
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      idx($value, DifferentialMergeConflictStatusField::KEY_BASE_COMMIT),
+      pht(
+        'The payload should record the base the stack was merged from, so a '.
+        'reader can tell how old the answer is without re-deriving it.'));
   }
 
   public function testStatusValueRecordsTheStackItDependsOn() {
@@ -90,6 +97,11 @@ final class DifferentialMergeConflictStatusFieldTestCase
       pht(
         'An `unknown` result records no target commit, so a retry is never '.
         'short-circuited.'));
+
+    $this->assertEqual(
+      null,
+      idx($value, DifferentialMergeConflictStatusField::KEY_BASE_COMMIT),
+      pht('An `unknown` result may not have resolved a base commit.'));
   }
 
   private function newStatusValue(): array {
@@ -97,6 +109,7 @@ final class DifferentialMergeConflictStatusFieldTestCase
       array(
         'status' => DifferentialMergeConflictStatusField::STATUS_CLEAN,
         'reason' => 'Merged against the current target branch tip.',
+        'baseCommit' => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         'targetCommit' => 'ffffffffffffffffffffffffffffffffffffffff',
       ),
       $this->newDiff(),
