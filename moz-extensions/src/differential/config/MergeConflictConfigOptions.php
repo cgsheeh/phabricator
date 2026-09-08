@@ -7,7 +7,7 @@ final class MergeConflictConfigOptions
   extends PhabricatorApplicationConfigOptions {
 
   const OPTION_ENABLED = 'merge.conflict.enabled';
-  const OPTION_REPOSITORIES = 'merge.conflict.repositories';
+  const OPTION_REPOSITORIES = 'merge.conflict.repository-phids';
 
   public function getName() {
     return pht('Merge Conflict Detection');
@@ -38,14 +38,16 @@ final class MergeConflictConfigOptions
             'work already in the queue is discarded, so this is safe to turn '.
             'off at any time. Statuses already stored are left alone and will '.
             'be recomputed when it is turned back on.')),
-      $this->newOption(self::OPTION_REPOSITORIES, 'list<string>', array())
+      $this->newOption(
+        self::OPTION_REPOSITORIES,
+        'custom:PhabricatorRepositoryListConfigType',
+        array())
         ->setSummary(pht('Limit merge conflict detection to these repositories.'))
         ->setDescription(
           pht(
-            'Repositories to check, as callsigns, monograms, IDs or PHIDs. '.
-            'Leave empty to check every repository. Has no effect unless '.
-            '`%s` is also on, so a staged rollout means enabling that option '.
-            'with a single repository listed here.',
+            'Repositories to check. Leave empty to check every repository. '.
+            'Has no effect unless `%s` is also on, so a staged rollout means '.
+            'enabling that option with a single repository selected here.',
             self::OPTION_ENABLED)),
     );
   }

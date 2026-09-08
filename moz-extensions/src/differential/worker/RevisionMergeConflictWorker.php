@@ -41,32 +41,13 @@ final class RevisionMergeConflictWorker extends PhabricatorWorker {
       return false;
     }
 
-    $allowed = PhabricatorEnv::getEnvConfig(
+    $allowed_phids = PhabricatorEnv::getEnvConfig(
       MergeConflictConfigOptions::OPTION_REPOSITORIES);
-    if (!$allowed) {
+    if (!$allowed_phids) {
       return true;
     }
 
-    // Match against every identifier the repository answers to, so operators
-    // can list callsigns, monograms, IDs or PHIDs interchangeably without this
-    // costing a query.
-    $identifiers = array(
-      $repository->getPHID(),
-      $repository->getMonogram(),
-      $repository->getCallsign(),
-      (string)$repository->getID(),
-    );
-
-    foreach ($identifiers as $identifier) {
-      if (!phutil_nonempty_string($identifier)) {
-        continue;
-      }
-      if (in_array($identifier, $allowed, true)) {
-        return true;
-      }
-    }
-
-    return false;
+    return in_array($repository->getPHID(), $allowed_phids, true);
   }
 
 /* -(  Scheduling  )--------------------------------------------------------- */

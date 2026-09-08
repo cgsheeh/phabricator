@@ -14,7 +14,7 @@ final class RevisionMergeConflictWorkerTestCase extends PhabricatorTestCase {
   }
 
   public function testDisabledGloballyOverridesTheRepositoryList() {
-    $env = $this->configure(false, array('TESTREPO'));
+    $env = $this->configure(false, array('PHID-REPO-testrepo'));
 
     $this->assertFalse(
       RevisionMergeConflictWorker::isEnabledForRepository($this->newRepo()),
@@ -31,22 +31,6 @@ final class RevisionMergeConflictWorkerTestCase extends PhabricatorTestCase {
       pht('An empty repository list should mean every repository.'));
   }
 
-  public function testRepositoryMatchesByCallsign() {
-    $env = $this->configure(true, array('TESTREPO'));
-
-    $this->assertTrue(
-      RevisionMergeConflictWorker::isEnabledForRepository($this->newRepo()),
-      pht('A callsign in the list should enable that repository.'));
-  }
-
-  public function testRepositoryMatchesByMonogram() {
-    $env = $this->configure(true, array('rTESTREPO'));
-
-    $this->assertTrue(
-      RevisionMergeConflictWorker::isEnabledForRepository($this->newRepo()),
-      pht('A monogram in the list should enable that repository.'));
-  }
-
   public function testRepositoryMatchesByPHID() {
     $env = $this->configure(true, array('PHID-REPO-testrepo'));
 
@@ -55,16 +39,18 @@ final class RevisionMergeConflictWorkerTestCase extends PhabricatorTestCase {
       pht('A PHID in the list should enable that repository.'));
   }
 
-  public function testRepositoryMatchesByID() {
-    $env = $this->configure(true, array('49'));
+  public function testRepositoryIsNotMatchedByCallsign() {
+    $env = $this->configure(true, array('TESTREPO'));
 
-    $this->assertTrue(
+    $this->assertFalse(
       RevisionMergeConflictWorker::isEnabledForRepository($this->newRepo()),
-      pht('An ID in the list should enable that repository.'));
+      pht(
+        'The list holds PHIDs, so a callsign should not enable a repository '.
+        'and cannot be mistaken for one.'));
   }
 
   public function testRepositoryNotInTheListIsSkipped() {
-    $env = $this->configure(true, array('SOMEOTHERREPO'));
+    $env = $this->configure(true, array('PHID-REPO-someotherrepo'));
 
     $this->assertFalse(
       RevisionMergeConflictWorker::isEnabledForRepository($this->newRepo()),
@@ -79,7 +65,7 @@ final class RevisionMergeConflictWorkerTestCase extends PhabricatorTestCase {
    */
   private function configure(
     bool $enabled,
-    array $repositories): PhabricatorScopedEnv {
+    array $repository_phids): PhabricatorScopedEnv {
     $env = PhabricatorEnv::beginScopedEnv();
 
     $env->overrideEnvConfig(
@@ -87,7 +73,7 @@ final class RevisionMergeConflictWorkerTestCase extends PhabricatorTestCase {
       $enabled);
     $env->overrideEnvConfig(
       MergeConflictConfigOptions::OPTION_REPOSITORIES,
-      $repositories);
+      $repository_phids);
 
     return $env;
   }
