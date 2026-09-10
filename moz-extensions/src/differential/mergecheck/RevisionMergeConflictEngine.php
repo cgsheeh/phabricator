@@ -512,24 +512,6 @@ final class RevisionMergeConflictEngine extends Phobject {
     }
   }
 
-  /**
-   * `merge-tree --write-tree` needs git 2.38 and `--merge-base` needs 2.40. The
-   * image build asserts this, so failing here means git was changed underneath
-   * us; say so plainly rather than reporting a bare non-zero exit code.
-   */
-  private function assertModernGit(): void {
-    $version = $this->getGitVersion();
-
-    if (version_compare($version, self::MINIMUM_GIT_VERSION, '<')) {
-      throw new Exception(
-        pht(
-          'Merge conflict detection requires git %s or newer, but this '.
-          'repository is using git %s.',
-          self::MINIMUM_GIT_VERSION,
-          $version));
-    }
-  }
-
 /* -(  Git helpers  )-------------------------------------------------------- */
 
   /**
@@ -567,6 +549,24 @@ final class RevisionMergeConflictEngine extends Phobject {
       ->updateEnv('GIT_COMMITTER_NAME', $name)
       ->updateEnv('GIT_COMMITTER_EMAIL', $email)
       ->updateEnv('GIT_COMMITTER_DATE', $date);
+  }
+
+  /**
+   * `merge-tree --write-tree` needs git 2.38 and `--merge-base` needs 2.40. The
+   * image build asserts this, so failing here means git was changed underneath
+   * us; say so plainly rather than reporting a bare non-zero exit code.
+   */
+  private function assertModernGit(): void {
+    $version = $this->getGitVersion();
+
+    if (version_compare($version, self::MINIMUM_GIT_VERSION, '<')) {
+      throw new Exception(
+        pht(
+          'Merge conflict detection requires git %s or newer, but this '.
+          'repository is using git %s.',
+          self::MINIMUM_GIT_VERSION,
+          $version));
+    }
   }
 
   private function getGitVersion(): string {
