@@ -21,7 +21,8 @@ final class RevisionMergeConflictStackQuery extends Phobject {
 
   // Applying every ancestor patch costs a `git apply` each, so give up on
   // pathologically deep stacks rather than spending unbounded worker time.
-  const MAX_ANCESTOR_DEPTH = 25;
+  // The deepest stacks seen in practice are around 50 revisions.
+  const MAX_ANCESTOR_DEPTH = 50;
 
   // Likewise, cap how many descendants a single change can fan out to.
   const MAX_DESCENDANTS = 100;
