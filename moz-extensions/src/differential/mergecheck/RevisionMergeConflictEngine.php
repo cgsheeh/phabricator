@@ -11,7 +11,15 @@
  * ourselves: seed a temporary index from the bottom of the revision's stack,
  * apply each patch in the stack into that index, and write a tree. We then
  * 3-way merge that tree against the current target-branch tip using the
- * stack's base as the merge base.
+ * stack's base as the merge base. The merge itself is `git merge-tree
+ * --write-tree --merge-base=<base>`, which reports its verdict through the
+ * exit code: 0 clean, 1 conflict, anything else a git failure rather than an
+ * answer. The merge base is passed explicitly because git would otherwise
+ * compute the common ancestor of the two commits, which is not what a rebased
+ * or uplifted revision should be merged against. This needs git 2.40 or newer,
+ * which the image provides and its build asserts; the version is checked here
+ * anyway so an old git produces an actionable reason rather than a bare
+ * non-zero exit code.
  *
  * A revision in a stack only lands after everything below it, so the tree we
  * merge includes every open ancestor's patch as well as the revision's own
@@ -21,14 +29,34 @@
  * When the bottom of the stack is based on a commit that isn't in the
  * repository -- the usual sign of a partially-landed stack, where the recorded
  * base only ever existed in the author's checkout -- we fall back to the commit
- * that closed the parent revision, which is what the rest of the stack was
- * written on top of.
+ * that closed the parent revision. Landing rewrites a commit's message but not
+ * its tree, so that is what the rest of the stack was written on top of. If the
+ * parent was genuinely rebased and its tree differs, the patch fails to apply
+ * and the result is inconclusive, so this can never invent a conflict.
  *
  * The result is one of `clean`, `conflict`, or `unknown`. A `conflict` is only
  * ever returned when `git merge-tree` completed and reported one; every
  * ambiguous situation (missing base, a base that isn't on the target branch, a
  * patch that doesn't apply, a missing branch, a git failure) yields `unknown`.
- * We never report a false `conflict`.
+ * We never report a false `conflict`. Command failures are logged rather than
+ * having their output stored in a field shown to users.
+ *
+ * Two things the check refuses to answer rather than guess at:
+ *
+ *   - A base that is in the object store but not an ancestor of the target
+ *     branch. It is forced as the merge base, so an off-branch base makes
+ *     everything the branch gained since the real fork point read as a
+ *     conflicting edit. Only a zero exit from `merge-base --is-ancestor`
+ *     proves ancestry; a git error is treated the same as "not an ancestor".
+ *   - A stack whose patch text exceeds a fixed budget. Every patch is
+ *     materialized in memory before reaching git, and the budget spans the
+ *     whole stack, since a tall stack of moderate diffs costs as much as one
+ *     enormous one.
+ *
+ * Every git invocation carries a time limit so a wedged command fails the check
+ * instead of pinning a taskmaster until its lease expires. Timeouts are
+ * detected explicitly, because a command killed by a signal must never have its
+ * exit code read as a merge verdict.
  */
 final class RevisionMergeConflictEngine extends Phobject {
 
