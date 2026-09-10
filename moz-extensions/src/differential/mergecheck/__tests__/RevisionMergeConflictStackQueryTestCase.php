@@ -3,6 +3,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+/**
+ * Covers the decisions the stack walk makes about a candidate parent.
+ *
+ * The stack itself is made of `DifferentialRevisionDependsOnRevisionEdgeType`
+ * edges, which `loadOpenParent` reads from the database, so these tests build
+ * unrelated revisions by hand and exercise the pure helpers the walk consults
+ * at each step instead of the walk itself.
+ */
 final class RevisionMergeConflictStackQueryTestCase
   extends PhabricatorTestCase {
 
