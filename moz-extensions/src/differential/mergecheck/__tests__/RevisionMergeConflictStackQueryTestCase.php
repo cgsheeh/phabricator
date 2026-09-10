@@ -53,8 +53,8 @@ final class RevisionMergeConflictStackQueryTestCase
       DifferentialRevisionStatus::NEEDS_REVIEW,
       'PHID-REPO-other');
 
-    $this->assertException(
-      'Exception',
+    $this->assertExceptionMessage(
+      'belongs to a different repository',
       function () use ($revision, $parent) {
         RevisionMergeConflictStackQuery::newParentStopReason(
           $revision,
@@ -70,8 +70,8 @@ final class RevisionMergeConflictStackQueryTestCase
       'PHID-REPO-main',
       false);
 
-    $this->assertException(
-      'Exception',
+    $this->assertExceptionMessage(
+      'has no active diff',
       function () use ($revision, $parent) {
         RevisionMergeConflictStackQuery::newParentStopReason(
           $revision,
@@ -107,6 +107,31 @@ final class RevisionMergeConflictStackQueryTestCase
       pht(
         'An open parent has not landed, so its patch is applied to the stack '.
         'instead of being used as the merge base.'));
+  }
+
+  /**
+   * Asserts that a callable throws, and that the exception explains why. The
+   * built-in `assertException` only checks the class, and every failure here
+   * is a plain `Exception`.
+   */
+  private function assertExceptionMessage(
+    string $expect_substring,
+    callable $callable): void {
+
+    try {
+      $callable();
+    } catch (Exception $ex) {
+      $this->assertTrue(
+        strpos($ex->getMessage(), $expect_substring) !== false,
+        pht(
+          'The exception should explain the problem with "%s": %s',
+          $expect_substring,
+          $ex->getMessage()));
+      return;
+    }
+
+    $this->assertFailure(
+      pht('Expected an exception mentioning "%s".', $expect_substring));
   }
 
   private function newRevision(
