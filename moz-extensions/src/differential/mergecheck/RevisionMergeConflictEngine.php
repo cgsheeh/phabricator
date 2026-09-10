@@ -142,7 +142,7 @@ final class RevisionMergeConflictEngine extends Phobject {
 
     return $this->newResult(
       $status,
-      $this->newSuccessReason(),
+      $this->newSuccessReason($base, $target_tip),
       $base,
       $target_tip);
   }
@@ -602,32 +602,55 @@ final class RevisionMergeConflictEngine extends Phobject {
     );
   }
 
-  private function newSuccessReason(): string {
+  /**
+   * Explains what was merged, naming both commits so the answer can be
+   * reproduced by hand long after the branch has moved on.
+   */
+  private function newSuccessReason(string $base, string $target_tip): string {
     $parent_count = count($this->getStackDiffs()) - 1;
+    $base_name = $this->formatCommitName($base);
+    $target_name = $this->formatCommitName($target_tip);
 
     if ($this->baseFromLandedParent) {
       if (!$parent_count) {
         return pht(
-          'Merged against the current target branch tip, starting from the '.
-          'commit that landed %s.',
+          'Merged against target branch tip %s, starting from %s, the commit '.
+          'that landed %s.',
+          $target_name,
+          $base_name,
           $this->baseFromLandedParent->getMonogram());
       }
 
       return pht(
-        'Merged against the current target branch tip, starting from the '.
-        'commit that landed %s, with %s parent revision(s) applied first.',
+        'Merged against target branch tip %s, starting from %s, the commit '.
+        'that landed %s, with %s parent revision(s) applied first.',
+        $target_name,
+        $base_name,
         $this->baseFromLandedParent->getMonogram(),
         new PhutilNumber($parent_count));
     }
 
     if (!$parent_count) {
-      return pht('Merged against the current target branch tip.');
+      return pht(
+        'Merged against target branch tip %s, starting from %s.',
+        $target_name,
+        $base_name);
     }
 
     return pht(
-      'Merged against the current target branch tip with %s parent '.
+      'Merged against target branch tip %s, starting from %s, with %s parent '.
       'revision(s) applied first.',
+      $target_name,
+      $base_name,
       new PhutilNumber($parent_count));
+  }
+
+  /**
+   * Abbreviates a commit the way the rest of the interface does, so a hash in
+   * a merge check message is recognisable next to one in Diffusion.
+   */
+  private function formatCommitName(string $commit): string {
+    return $this->repository->formatCommitName($commit, true);
   }
 
   /**

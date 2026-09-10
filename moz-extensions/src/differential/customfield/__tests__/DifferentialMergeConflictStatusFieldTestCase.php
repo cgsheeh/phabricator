@@ -42,7 +42,8 @@ final class DifferentialMergeConflictStatusFieldTestCase
       pht('The payload should carry the status the engine reported.'));
 
     $this->assertEqual(
-      'Merged against the current target branch tip.',
+      'Merged against target branch tip ffffffffffff, starting from '.
+      'aaaaaaaaaaaa.',
       idx($value, DifferentialMergeConflictStatusField::KEY_REASON),
       pht('The payload should carry the reason the engine reported.'));
 
@@ -177,7 +178,9 @@ final class DifferentialMergeConflictStatusFieldTestCase
     return DifferentialMergeConflictStatusField::newStatusValue(
       array(
         'status' => DifferentialMergeConflictStatusField::STATUS_CLEAN,
-        'reason' => 'Merged against the current target branch tip.',
+        'reason' =>
+          'Merged against target branch tip ffffffffffff, starting from '.
+          'aaaaaaaaaaaa.',
         'baseCommit' => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         'targetCommit' => 'ffffffffffffffffffffffffffffffffffffffff',
       ),
